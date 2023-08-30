@@ -1,0 +1,136 @@
+#!/usr/bin/php
+<?php
+if ($argc != 2 || in_array($argv[1], array('--help', '-help', '-h', '-?'))) {
+?>
+
+GeoJSON to MySQL / MariaDB - Version 1.0
+
+This is a command line PHP script with one option.
+
+Usage:
+<?php echo $argv[0]; ?> <geojson file>
+
+<geojson file> must include the path to the file, 
+if it is not in the local path (./).
+With the --help, -help, -h,or -? options, 
+you can get this message.
+
+<?php
+} else {
+    if ( $argv[1] == NULL || strlen($argv[1]) == 0 ) {
+?>
+    Error: Requires a specificed GeoJSON file to process.
+<?php
+    exit;
+    }
+
+    require 'config/env.php';
+    require 'config/db.inc.php';
+
+    // Check Database for proper structure:
+    $check_results = mysqli_query($conn,"show tables;");
+    $check_results_str = "";
+
+    while ($row = mysqli_fetch_array($check_results))  {
+
+        $array_count = count($row) - 1;
+        $i = 0;
+        do {
+            $check_results_str .= $row[$i];
+        } while ($i > $array_count);
+
+    } mysqli_free_result($check_results);
+    unset($row);
+    unset($array_count);
+
+    if (! str_contains($check_results_str,"GEOMETRY") ) {
+        $create_geometry = file_get_contents("sql/GEOMETRY.sql");
+        mysqli_query($conn,$create_geometry);
+    } elseif (! str_contains($check_results_str,"METADATA") ) {
+        $create_metadata = file_get_contents("sql/METADATA.sql");
+        mysqli_query($conn,$create_metadata);
+    } elseif (! str_contains($check_results_str,"GEOMETRY_TYPES") ) {
+        $create_geometry_types = file_get_contents("sql/GEOMETRY_TYPES.sql");
+        mysqli_query($conn,$create_geometry_types);
+    } elseif (! str_contains($check_results_str,"ISO3") ) {
+        $create_iso3 = file_get_contents("sql/ISO3.sql");
+        mysqli_query($conn,$create_iso3);
+    }
+    // End Check Database Structure - Result: Passed or Fixed.
+
+    // Set JSON file to Argument passed.
+    $filename = $argv[1];
+
+    // Read Content of JSON file
+    $data = file_get_contents($filename);
+    $data = json_decode($data, TRUE);
+
+    // Convert the JSON String into PHP Array
+    $features = $data['features'];
+
+    // For each Feature in GeoJSON.
+    foreach ($features as $feature) {
+        // get Features' Properties/Metadata.
+        $properties_values = $feature['properties'];
+        $properties = json_decode($properties_values);
+
+        // Parse through each Property.
+        $array_count = count($properties_values) - 1;
+        $i = 0;
+        do {
+            // Add each Property to String
+            $column_name = implode(array_keys($row[$i]));
+            $query_createMetadataColumn = "ALTER TABLE METADATA
+            ADD " . $column_name . "VARCHAR(255)"; // THIS LINE COULD BE OPTIMIZED... probably.
+            $query_insertMetadataRow = "INSERT INTO METADATA ($column_name) VALUES 
+            ('$row[$i]'); ";
+
+            mysqli_query($conn, $query_createMetadataColumn);
+            mysqli_query($conn, $query_insertMetadataRow);
+
+        } while ($i > $array_count);
+        unset($row);
+        unset($array_count);
+
+        // Start Geometries
+        $geometries = $feature['geometry'];
+        $geometries = json_decode($geometries);
+
+        $geometry_type = $geometries['type'];
+        $coordinates = $geometries['coordinates'];
+
+        // Get Geometries Type Code from Name
+        $get_geometry_type = mysqli_query($conn,"Select type from GEOMETRY_TYPES where type_name = " . $geometry_type . ";");
+
+        $geometry_type_array = mysqli_fetch_array($get_geometry_type);
+        $geometry_type_code = implode(array_values($geometry_type_array));
+
+        mysqli_free_result($get_geometry_type);
+
+        $query =
+            "INSERT INTO HRWDATA VALUES 
+            ('" . $property_iso3 . "', '" . 0 . "', '" . $property_hrvcount . "', 
+            '" . $property_violation . "', '" . 0 . "'); ";
+    
+        mysqli_query($conn, $query);
+    
+        $query2 =
+            "INSERT INTO METADATA VALUES
+            ('" . $property_iso3 . "', '" . $property_continent . "', 
+            '" . $property_name . "'); ";
+    
+        mysqli_query($conn, $query2);
+    
+        $query3 =
+            "INSERT INTO GEOMETRY VALUES
+            ('" . $property_iso3 . "', '" . $geometry_type_code . "', 
+            '" . "$geometries_str" . "'); ";
+    
+        mysqli_query($conn, $query3);
+
+    } unset($feature);
+
+mysqli_close($conn);
+
+}
+?>
